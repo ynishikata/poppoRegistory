@@ -1,0 +1,32 @@
+# Go build artefacts
+bin/
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+
+# Go modules cache (should not normally live in repo, just in case)
+vendor/
+
+# SQLite DB
+poppo.db
+
+# Uploaded images
+uploads/
+
+# Node / frontend
+frontend/node_modules/
+frontend/dist/
+frontend/.vite/
+
+# OS / editor
+.DS_Store
+*.swp
+*.swo
+.idea/
+.vscode/
+
+
