@@ -54,7 +54,10 @@ func main() {
 
 			r.Get("/plushies", app.HandleListPlushies)
 			r.Post("/plushies", app.HandleCreatePlushie)
+			r.Get("/plushies/{id}", app.HandleGetPlushie)
 			r.Put("/plushies/{id}", app.HandleUpdatePlushie)
+			r.Put("/plushies/{id}/conversation", app.HandleUpdateConversation)
+			r.Post("/plushies/{id}/chat", app.HandleChat)
 			r.Delete("/plushies/{id}", app.HandleDeletePlushie)
 		})
 	})

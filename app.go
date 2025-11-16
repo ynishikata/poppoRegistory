@@ -1,10 +1,14 @@
 package main
 
 import (
+	"bytes"
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"io"
 	"net/http"
+	"os"
 	"strconv"
 	"time"
 
@@ -26,14 +30,15 @@ type User struct {
 }
 
 type Plushie struct {
-	ID         int64     `json:"id"`
-	UserID     int64     `json:"-"`
-	Name       string    `json:"name"`
-	Kind       string    `json:"kind"`
-	AdoptedAt  string    `json:"adopted_at"` // ISO8601 (yyyy-mm-dd)
-	ImageURL   string    `json:"image_url"`
-	CreatedAt  time.Time `json:"created_at"`
-	ModifiedAt time.Time `json:"modified_at"`
+	ID                  int64     `json:"id"`
+	UserID              int64     `json:"-"`
+	Name                string    `json:"name"`
+	Kind                string    `json:"kind"`
+	AdoptedAt           string    `json:"adopted_at"` // ISO8601 (yyyy-mm-dd)
+	ImageURL            string    `json:"image_url"`
+	ConversationHistory string    `json:"conversation_history"`
+	CreatedAt           time.Time `json:"created_at"`
+	ModifiedAt          time.Time `json:"modified_at"`
 }
 
 func respondJSON(w http.ResponseWriter, status int, v any) {
@@ -204,6 +209,47 @@ func (a *App) HandleListPlushies(w http.ResponseWriter, r *http.Request) {
 	respondJSON(w, http.StatusOK, items)
 }
 
+func (a *App) HandleGetPlushie(w http.ResponseWriter, r *http.Request) {
+	userID := userIDFromContext(r.Context())
+	idStr := chi.URLParam(r, "id")
+	id, err := strconv.ParseInt(idStr, 10, 64)
+	if err != nil {
+		respondError(w, http.StatusBadRequest, "invalid id")
+		return
+	}
+
+	var p Plushie
+	var adoptedAt sql.NullString
+	var imagePath sql.NullString
+	var conversationHistory sql.NullString
+	err = a.DB.QueryRow(`
+		SELECT id, name, kind, adopted_at, image_path, conversation_history, created_at, updated_at
+		FROM plushies
+		WHERE id = ? AND user_id = ?
+	`, id, userID).Scan(&p.ID, &p.Name, &p.Kind, &adoptedAt, &imagePath, &conversationHistory, &p.CreatedAt, &p.ModifiedAt)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			respondError(w, http.StatusNotFound, "plushie not found")
+		} else {
+			respondError(w, http.StatusInternalServerError, "failed to query plushie")
+		}
+		return
+	}
+
+	p.UserID = userID
+	if adoptedAt.Valid {
+		p.AdoptedAt = adoptedAt.String
+	}
+	if imagePath.Valid {
+		p.ImageURL = "/uploads/" + imagePath.String
+	}
+	if conversationHistory.Valid {
+		p.ConversationHistory = conversationHistory.String
+	}
+
+	respondJSON(w, http.StatusOK, p)
+}
+
 func (a *App) HandleCreatePlushie(w http.ResponseWriter, r *http.Request) {
 	userID := userIDFromContext(r.Context())
 
@@ -311,6 +357,164 @@ func (a *App) HandleDeletePlushie(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.WriteHeader(http.StatusNoContent)
+}
+
+func (a *App) HandleUpdateConversation(w http.ResponseWriter, r *http.Request) {
+	userID := userIDFromContext(r.Context())
+	idStr := chi.URLParam(r, "id")
+	id, err := strconv.ParseInt(idStr, 10, 64)
+	if err != nil {
+		respondError(w, http.StatusBadRequest, "invalid id")
+		return
+	}
+
+	var req struct {
+		ConversationHistory string `json:"conversation_history"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		respondError(w, http.StatusBadRequest, "invalid json")
+		return
+	}
+
+	// ensure it belongs to this user
+	var exists int
+	err = a.DB.QueryRow(`SELECT 1 FROM plushies WHERE id = ? AND user_id = ?`, id, userID).Scan(&exists)
+	if err != nil {
+		respondError(w, http.StatusNotFound, "plushie not found")
+		return
+	}
+
+	_, err = a.DB.Exec(`
+		UPDATE plushies
+		SET conversation_history = ?, updated_at = ?
+		WHERE id = ? AND user_id = ?
+	`, req.ConversationHistory, time.Now().UTC(), id, userID)
+	if err != nil {
+		respondError(w, http.StatusInternalServerError, "failed to update conversation history")
+		return
+	}
+
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (a *App) HandleChat(w http.ResponseWriter, r *http.Request) {
+	userID := userIDFromContext(r.Context())
+	idStr := chi.URLParam(r, "id")
+	id, err := strconv.ParseInt(idStr, 10, 64)
+	if err != nil {
+		respondError(w, http.StatusBadRequest, "invalid id")
+		return
+	}
+
+	// Get plushie details
+	var name, kind string
+	var conversationHistory sql.NullString
+	err = a.DB.QueryRow(`
+		SELECT name, kind, conversation_history
+		FROM plushies
+		WHERE id = ? AND user_id = ?
+	`, id, userID).Scan(&name, &kind, &conversationHistory)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			respondError(w, http.StatusNotFound, "plushie not found")
+		} else {
+			respondError(w, http.StatusInternalServerError, "failed to query plushie")
+		}
+		return
+	}
+
+	// Call OpenAI API
+	apiKey := os.Getenv("OPENAI_API_KEY")
+	if apiKey == "" {
+		respondError(w, http.StatusInternalServerError, "OPENAI_API_KEY not configured")
+		return
+	}
+
+	history := ""
+	if conversationHistory.Valid {
+		history = conversationHistory.String
+	}
+
+	prompt := buildChatPrompt(name, kind, history)
+	message, err := callOpenAI(apiKey, prompt)
+	if err != nil {
+		respondError(w, http.StatusInternalServerError, "failed to generate chat: "+err.Error())
+		return
+	}
+
+	respondJSON(w, http.StatusOK, map[string]string{"message": message})
+}
+
+func buildChatPrompt(name, kind, history string) string {
+	prompt := fmt.Sprintf("あなたは「%s」という名前の%sのぬいぐるみです。", name, kind)
+	if history != "" {
+		prompt += fmt.Sprintf("\n\n過去の会話履歴:\n%s\n\n", history)
+	}
+	prompt += "このぬいぐるみのキャラクターとして、短い一言（1〜2文程度）を話してください。親しみやすく、温かみのある言葉を選んでください。"
+	return prompt
+}
+
+func callOpenAI(apiKey, prompt string) (string, error) {
+	type Message struct {
+		Role    string `json:"role"`
+		Content string `json:"content"`
+	}
+	type Request struct {
+		Model    string    `json:"model"`
+		Messages []Message `json:"messages"`
+		MaxTokens int      `json:"max_tokens"`
+	}
+
+	reqBody := Request{
+		Model: "gpt-4o-mini",
+		Messages: []Message{
+			{Role: "user", Content: prompt},
+		},
+		MaxTokens: 100,
+	}
+
+	jsonData, err := json.Marshal(reqBody)
+	if err != nil {
+		return "", fmt.Errorf("failed to marshal request: %w", err)
+	}
+
+	req, err := http.NewRequest("POST", "https://api.openai.com/v1/chat/completions", bytes.NewBuffer(jsonData))
+	if err != nil {
+		return "", fmt.Errorf("failed to create request: %w", err)
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+apiKey)
+
+	client := &http.Client{Timeout: 30 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("failed to call OpenAI API: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return "", fmt.Errorf("OpenAI API error: %d - %s", resp.StatusCode, string(body))
+	}
+
+	type Choice struct {
+		Message Message `json:"message"`
+	}
+	type Response struct {
+		Choices []Choice `json:"choices"`
+	}
+
+	var apiResp Response
+	if err := json.NewDecoder(resp.Body).Decode(&apiResp); err != nil {
+		return "", fmt.Errorf("failed to decode response: %w", err)
+	}
+
+	if len(apiResp.Choices) == 0 {
+		return "", fmt.Errorf("no choices in response")
+	}
+
+	return apiResp.Choices[0].Message.Content, nil
 }
 
 func nullIfEmpty(s string) any {

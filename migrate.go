@@ -27,12 +27,22 @@ CREATE TABLE IF NOT EXISTS plushies (
 	kind TEXT NOT NULL,
 	adopted_at TEXT,
 	image_path TEXT,
+	conversation_history TEXT,
 	created_at TIMESTAMP NOT NULL,
 	updated_at TIMESTAMP NOT NULL,
 	FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
 );
 `)
-	return err
+	if err != nil {
+		return err
+	}
+
+	// Add conversation_history column if it doesn't exist (for existing databases)
+	_, err = db.Exec(`
+ALTER TABLE plushies ADD COLUMN conversation_history TEXT;
+`)
+	// Ignore error if column already exists
+	return nil
 }
 
 

@@ -1,4 +1,5 @@
 import { FormEvent, useEffect, useState } from "react";
+import { Link } from "react-router-dom";
 import {
   apiCreatePlushie,
   apiDeletePlushie,
@@ -192,7 +193,14 @@ export function PlushiesPage() {
                     </div>
                     <div className="plush-footer">
                       <span className="badge-kind">{p.kind}</span>
-                      <div style={{ display: "flex", gap: 4 }}>
+                      <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
+                        <Link
+                          to={`/plushies/${p.id}`}
+                          className="btn btn-ghost"
+                          style={{ textDecoration: "none" }}
+                        >
+                          詳細を見る
+                        </Link>
                         <button
                           type="button"
                           className="btn btn-ghost"

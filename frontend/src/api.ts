@@ -9,6 +9,7 @@ export type Plushie = {
   kind: string;
   adopted_at?: string;
   image_url?: string;
+  conversation_history?: string;
   created_at?: string;
 };
 
@@ -132,6 +133,36 @@ export async function apiUpdatePlushie(
     credentials: "include"
   });
   await handleResponse<unknown>(res);
+}
+
+export async function apiGetPlushie(id: number): Promise<Plushie> {
+  const res = await fetch(`${API_BASE}/plushies/${id}`, {
+    method: "GET",
+    credentials: "include"
+  });
+  const plushie = await handleResponse<Plushie>(res);
+  if (plushie.image_url) {
+    plushie.image_url = `${API_ORIGIN}${plushie.image_url}`;
+  }
+  return plushie;
+}
+
+export async function apiUpdateConversation(id: number, conversationHistory: string): Promise<void> {
+  const res = await fetch(`${API_BASE}/plushies/${id}/conversation`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    credentials: "include",
+    body: JSON.stringify({ conversation_history: conversationHistory })
+  });
+  await handleResponse<unknown>(res);
+}
+
+export async function apiChat(id: number): Promise<{ message: string }> {
+  const res = await fetch(`${API_BASE}/plushies/${id}/chat`, {
+    method: "POST",
+    credentials: "include"
+  });
+  return handleResponse<{ message: string }>(res);
 }
 
 export async function apiDeletePlushie(id: number): Promise<void> {
