@@ -7,64 +7,82 @@
 ### 構成
 
 - `main.go` ほか: Go API サーバー
-  - `/api/register` / `/api/login` / `/api/logout`
-  - `/api/me`
-  - `/api/plushies` (GET/POST/PUT/DELETE)
+  - 認証: Supabase Auth (JWT)
+  - `/api/me` - 現在のユーザー情報取得
+  - `/api/plushies` (GET/POST/PUT/DELETE) - ぬいぐるみCRUD
   - `/api/plushies/{id}` (GET) - ぬいぐるみ詳細取得
   - `/api/plushies/{id}/conversation` (PUT) - 会話履歴の更新
   - `/api/plushies/{id}/chat` (POST) - LLM APIを使った一言生成
   - `uploads/` ディレクトリに画像ファイルを保存
 - `frontend/`: React フロントエンド (Vite + TypeScript + React Router)
+  - Supabase Auth クライアントを使用
 
 ### 動かし方
 
-#### 1. バックエンド(Go)を起動
+#### 1. 環境変数の設定
+
+プロジェクトルートに `.env` ファイルを作成し、以下の環境変数を設定してください:
+
+```bash
+# .env
+SUPABASE_JWT_SECRET=your-supabase-jwt-secret
+OPENAI_API_KEY=sk-...  # 会話機能を使う場合のみ
+```
+
+- `SUPABASE_JWT_SECRET`: Supabase Dashboard (Settings > API > JWT Secret) から取得
+- `OPENAI_API_KEY`: [OpenAI Platform](https://platform.openai.com/api-keys) から取得（会話機能を使う場合のみ）
+
+#### 2. バックエンド(Go)を起動
 
 ```bash
 cd /Users/y/go/src/github.com/ynishikata/poppoRegistory
 go mod tidy
-
-# OpenAI APIキーを環境変数で設定（会話機能を使う場合）
-export OPENAI_API_KEY="sk-..."
 go run .
 ```
 
 - ポート `:8080` で起動します。
 - 起動時に `poppo.db`(SQLite) と `uploads/` ディレクトリが作られます。
-- **会話機能を使う場合**: 環境変数 `OPENAI_API_KEY` にOpenAI APIキーを設定してください。
-  - APIキーは [OpenAI Platform](https://platform.openai.com/api-keys) で取得できます。
+- **会話機能を使う場合**: `.env` ファイルに `OPENAI_API_KEY` を設定してください。
   - 設定しない場合、「話す」機能はエラーになりますが、その他の機能は正常に動作します。
 
-#### 2. フロントエンド(React)を起動
+#### 3. フロントエンド(React)を起動
 
 別のターミナルで:
 
 ```bash
 cd /Users/y/go/src/github.com/ynishikata/poppoRegistory/frontend
 npm install   # or: pnpm install / yarn
+```
+
+`frontend/.env` ファイルを作成し、Supabaseの認証情報を設定してください:
+
+```bash
+# frontend/.env
+VITE_SUPABASE_URL=https://your-project.supabase.co
+VITE_SUPABASE_ANON_KEY=your-anon-key
+```
+
+Supabase Dashboard (Settings > API) から取得できます。
+
+```bash
 npm run dev
 ```
 
 - 通常 `http://localhost:5173` で開発サーバーが立ちます。
 - API へのアクセス先はデフォルトで `http://localhost:8080/api` を見るようになっています。
-  - 変更したい場合は `.env` を作成して `VITE_API_BASE` を設定してください。
-
-```bash
-# frontend/.env
-VITE_API_BASE=http://localhost:8080/api
-```
 
 ### 使い方
 
 #### 基本的な使い方
 
 1. ブラウザで `http://localhost:5173` を開く
-2. メールアドレスとパスワードで「新規登録」→そのままログイン
+2. メールアドレスとパスワードで「新規登録」→そのままログイン（Supabase Authを使用）
 3. ログイン後、画面右側に「ぬいぐるみ一覧」、左側に「登録フォーム」が表示されます
 4. 「名前」「種類」「お迎え日」「写真ファイル」を入力して登録
 5. カード一覧から「編集」「削除」ができます
 
 ※ ログインしているユーザーごとに、ぬいぐるみ一覧は分かれています。
+※ 認証は Supabase Auth を使用しています。
 
 #### 会話機能の使い方
 
@@ -88,8 +106,10 @@ VITE_API_BASE=http://localhost:8080/api
 
 ### メモ
 
-- **セキュリティ**: 本番運用を想定する場合は、セッションの永続化(メモリではなくRedisなど)と HTTPS + `Secure` Cookie、画像容量制限などを追加してください。
+- **認証**: Supabase Auth を使用しています。JWT トークンで認証を行います。
+- **セキュリティ**: 本番運用を想定する場合は、HTTPS + `Secure` Cookie、画像容量制限などを追加してください。
 - **OpenAI API**: 会話機能は OpenAI API (gpt-4o-mini) を使用しています。APIキーは環境変数で管理し、リポジトリにコミットしないでください。
 - **コスト**: OpenAI APIの使用には料金がかかります。詳細は [OpenAI Pricing](https://openai.com/api/pricing/) を参照してください。
+- **エラーメッセージ**: エラーメッセージは日本語で表示されます。
 
 

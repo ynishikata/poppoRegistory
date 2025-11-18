@@ -29,4 +29,11 @@ frontend/.vite/
 .idea/
 .vscode/
 
+# Environment variables
+.env
+.env.local
+.env.*.local
+frontend/.env
+frontend/.env.local
+frontend/.env.*.local
 

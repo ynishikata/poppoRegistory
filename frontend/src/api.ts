@@ -1,5 +1,7 @@
+import { supabase } from "./supabase";
+
 export type User = {
-  id: number;
+  id: string; // Changed to string (UUID) for Supabase
   email: string;
 };
 
@@ -22,14 +24,38 @@ try {
   API_ORIGIN = "http://localhost:8080";
 }
 
+// Get Supabase JWT token for API requests
+async function getAuthToken(): Promise<string | null> {
+  const { data: { session }, error } = await supabase.auth.getSession();
+  if (error) {
+    console.error("Failed to get session:", error);
+    return null;
+  }
+  if (!session) {
+    console.warn("No active session. Please log in.");
+    return null;
+  }
+  return session.access_token || null;
+}
+
 async function handleResponse<T>(res: Response): Promise<T> {
   if (!res.ok) {
-    let message = `Error ${res.status}`;
+    let message = `エラーが発生しました (${res.status})`;
     try {
       const data = (await res.json()) as { error?: string };
-      if (data.error) message = data.error;
+      if (data.error) {
+        message = data.error;
+        // Translate common error messages to Japanese
+        if (message.includes("unauthorized")) {
+          message = "認証が必要です。ログインしてください。";
+        } else if (message.includes("not found")) {
+          message = "見つかりませんでした。";
+        } else if (message.includes("failed to")) {
+          message = "処理に失敗しました。";
+        }
+      }
     } catch {
-      // ignore
+      // ignore JSON parse errors
     }
     throw new Error(message);
   }
@@ -40,48 +66,64 @@ async function handleResponse<T>(res: Response): Promise<T> {
   return (await res.json()) as T;
 }
 
+// Supabase Auth functions
 export async function apiRegister(email: string, password: string): Promise<User> {
-  const res = await fetch(`${API_BASE}/register`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    credentials: "include",
-    body: JSON.stringify({ email, password })
+  const { data, error } = await supabase.auth.signUp({
+    email,
+    password,
   });
-  return handleResponse<User>(res);
+  if (error) throw new Error(error.message);
+  if (!data.user) throw new Error("Failed to create user");
+  return {
+    id: data.user.id,
+    email: data.user.email || "",
+  };
 }
 
 export async function apiLogin(email: string, password: string): Promise<User> {
-  const res = await fetch(`${API_BASE}/login`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    credentials: "include",
-    body: JSON.stringify({ email, password })
+  const { data, error } = await supabase.auth.signInWithPassword({
+    email,
+    password,
   });
-  return handleResponse<User>(res);
+  if (error) throw new Error(error.message);
+  if (!data.user) throw new Error("Failed to login");
+  return {
+    id: data.user.id,
+    email: data.user.email || "",
+  };
 }
 
 export async function apiLogout(): Promise<void> {
-  const res = await fetch(`${API_BASE}/logout`, {
-    method: "POST",
-    credentials: "include"
-  });
-  await handleResponse<unknown>(res);
+  const { error } = await supabase.auth.signOut();
+  if (error) throw new Error(error.message);
 }
 
 export async function apiMe(): Promise<User> {
-  const res = await fetch(`${API_BASE}/me`, {
-    method: "GET",
-    credentials: "include"
-  });
-  return handleResponse<User>(res);
+  const { data: { user }, error } = await supabase.auth.getUser();
+  if (error) throw new Error(error.message);
+  if (!user) throw new Error("Not authenticated");
+  return {
+    id: user.id,
+    email: user.email || "",
+  };
 }
 
 export async function apiListPlushies(): Promise<Plushie[]> {
+  const token = await getAuthToken();
+  if (!token) {
+    throw new Error("Not authenticated. Please log in.");
+  }
+  const headers: HeadersInit = {
+    "Authorization": `Bearer ${token}`,
+  };
   const res = await fetch(`${API_BASE}/plushies`, {
     method: "GET",
-    credentials: "include"
+    headers,
   });
   const list = await handleResponse<Plushie[]>(res);
+  if (!list || !Array.isArray(list)) {
+    return [];
+  }
   return list.map((p) =>
     p.image_url
       ? {
@@ -104,10 +146,17 @@ export async function apiCreatePlushie(params: {
   if (params.adoptedAt) form.set("adopted_at", params.adoptedAt);
   if (params.imageFile) form.set("image", params.imageFile);
 
+  const token = await getAuthToken();
+  if (!token) {
+    throw new Error("Not authenticated. Please log in.");
+  }
+  const headers: HeadersInit = {
+    "Authorization": `Bearer ${token}`,
+  };
   const res = await fetch(`${API_BASE}/plushies`, {
     method: "POST",
+    headers,
     body: form,
-    credentials: "include"
   });
   return handleResponse<{ id: number }>(res);
 }
@@ -127,18 +176,32 @@ export async function apiUpdatePlushie(
   if (params.adoptedAt) form.set("adopted_at", params.adoptedAt);
   if (params.imageFile) form.set("image", params.imageFile);
 
+  const token = await getAuthToken();
+  if (!token) {
+    throw new Error("Not authenticated. Please log in.");
+  }
+  const headers: HeadersInit = {
+    "Authorization": `Bearer ${token}`,
+  };
   const res = await fetch(`${API_BASE}/plushies/${id}`, {
     method: "PUT",
+    headers,
     body: form,
-    credentials: "include"
   });
   await handleResponse<unknown>(res);
 }
 
 export async function apiGetPlushie(id: number): Promise<Plushie> {
+  const token = await getAuthToken();
+  if (!token) {
+    throw new Error("Not authenticated. Please log in.");
+  }
+  const headers: HeadersInit = {
+    "Authorization": `Bearer ${token}`,
+  };
   const res = await fetch(`${API_BASE}/plushies/${id}`, {
     method: "GET",
-    credentials: "include"
+    headers,
   });
   const plushie = await handleResponse<Plushie>(res);
   if (plushie.image_url) {
@@ -148,27 +211,48 @@ export async function apiGetPlushie(id: number): Promise<Plushie> {
 }
 
 export async function apiUpdateConversation(id: number, conversationHistory: string): Promise<void> {
+  const token = await getAuthToken();
+  if (!token) {
+    throw new Error("Not authenticated. Please log in.");
+  }
+  const headers: HeadersInit = {
+    "Content-Type": "application/json",
+    "Authorization": `Bearer ${token}`,
+  };
   const res = await fetch(`${API_BASE}/plushies/${id}/conversation`, {
     method: "PUT",
-    headers: { "Content-Type": "application/json" },
-    credentials: "include",
+    headers,
     body: JSON.stringify({ conversation_history: conversationHistory })
   });
   await handleResponse<unknown>(res);
 }
 
 export async function apiChat(id: number): Promise<{ message: string }> {
+  const token = await getAuthToken();
+  if (!token) {
+    throw new Error("Not authenticated. Please log in.");
+  }
+  const headers: HeadersInit = {
+    "Authorization": `Bearer ${token}`,
+  };
   const res = await fetch(`${API_BASE}/plushies/${id}/chat`, {
     method: "POST",
-    credentials: "include"
+    headers,
   });
   return handleResponse<{ message: string }>(res);
 }
 
 export async function apiDeletePlushie(id: number): Promise<void> {
+  const token = await getAuthToken();
+  if (!token) {
+    throw new Error("Not authenticated. Please log in.");
+  }
+  const headers: HeadersInit = {
+    "Authorization": `Bearer ${token}`,
+  };
   const res = await fetch(`${API_BASE}/plushies/${id}`, {
     method: "DELETE",
-    credentials: "include"
+    headers,
   });
   await handleResponse<unknown>(res);
 }
