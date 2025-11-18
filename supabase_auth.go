@@ -42,6 +42,13 @@ func (s *SupabaseAuth) VerifyToken(tokenString string) (string, error) {
 		return "", errors.New("SUPABASE_JWT_SECRET not configured")
 	}
 
+	// Debug: Log token info (first 50 chars only)
+	if len(tokenString) > 50 {
+		log.Printf("DEBUG: Verifying token, length: %d, first 50 chars: %s", len(tokenString), tokenString[:50])
+	} else {
+		log.Printf("DEBUG: Verifying token: %s", tokenString)
+	}
+
 	// Parse token with verification
 	token, err := jwt.ParseWithClaims(tokenString, &SupabaseClaims{}, func(token *jwt.Token) (interface{}, error) {
 		// Verify signing method
@@ -53,17 +60,25 @@ func (s *SupabaseAuth) VerifyToken(tokenString string) (string, error) {
 
 	if err != nil {
 		log.Printf("JWT parse error: %v", err)
+		// More detailed error logging
+		if strings.Contains(err.Error(), "signature is invalid") {
+			log.Printf("ERROR: JWT signature verification failed. Check SUPABASE_JWT_SECRET.")
+			log.Printf("DEBUG: JWT Secret length: %d", len(s.JWTSecret))
+		}
 		return "", fmt.Errorf("failed to parse token: %w", err)
 	}
 
 	if claims, ok := token.Claims.(*SupabaseClaims); ok && token.Valid {
 		// Check expiration
 		if claims.Exp > 0 && time.Now().Unix() > claims.Exp {
+			log.Printf("DEBUG: Token expired. Exp: %d, Now: %d", claims.Exp, time.Now().Unix())
 			return "", errors.New("token expired")
 		}
+		log.Printf("DEBUG: Token verified successfully, userID: %s", claims.Sub)
 		return claims.Sub, nil
 	}
 
+	log.Printf("DEBUG: Token validation failed. Valid: %v", token.Valid)
 	return "", errors.New("invalid token")
 }
 
@@ -118,9 +133,26 @@ func (a *App) SupabaseAuthMiddleware(next http.Handler) http.Handler {
 			respondError(w, http.StatusInternalServerError, "サーバー設定エラー: SUPABASE_JWT_SECRETが設定されていません")
 			return
 		}
+		
+		// Debug: Log Authorization header (first 50 chars only)
+		authHeader := r.Header.Get("Authorization")
+		if authHeader != "" {
+			if len(authHeader) > 50 {
+				log.Printf("DEBUG: Authorization header present, length: %d, first 50 chars: %s", len(authHeader), authHeader[:50])
+			} else {
+				log.Printf("DEBUG: Authorization header: %s", authHeader)
+			}
+		} else {
+			log.Printf("DEBUG: No Authorization header found")
+		}
+		
 		userID, err := supabaseAuth.GetUserIDFromRequest(r)
 		if err != nil || userID == "" {
 			log.Printf("Auth error: %v", err)
+			// More detailed error logging
+			if err != nil {
+				log.Printf("Auth error details: %T, %v", err, err)
+			}
 			errMsg := "認証に失敗しました"
 			if err != nil {
 				if strings.Contains(err.Error(), "token expired") {
@@ -129,11 +161,16 @@ func (a *App) SupabaseAuthMiddleware(next http.Handler) http.Handler {
 					errMsg = "認証トークンが見つかりません。ログインしてください。"
 				} else if strings.Contains(err.Error(), "SUPABASE_JWT_SECRET") {
 					errMsg = "サーバー設定エラーが発生しました。"
+				} else if strings.Contains(err.Error(), "signature is invalid") {
+					errMsg = "トークンの検証に失敗しました。SUPABASE_JWT_SECRETが正しく設定されているか確認してください。"
+				} else if strings.Contains(err.Error(), "failed to parse token") {
+					errMsg = "トークンの解析に失敗しました。"
 				}
 			}
 			respondError(w, http.StatusUnauthorized, errMsg)
 			return
 		}
+		log.Printf("DEBUG: Auth successful, userID: %s", userID)
 		ctx := withSupabaseUserID(r.Context(), userID)
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})
