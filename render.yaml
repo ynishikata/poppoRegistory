@@ -32,16 +32,21 @@ services:
     region: oregon
     plan: free
     buildCommand: cd frontend && npm install && npm run build
-    startCommand: cd frontend && npx serve -s dist -l 3000
+    startCommand: cd frontend && npx serve -s dist -l $PORT
     envVars:
       - key: VITE_SUPABASE_URL
         sync: false
+        # Required: Set your Supabase project URL
       - key: VITE_SUPABASE_ANON_KEY
         sync: false
+        # Required: Set your Supabase anon key
       - key: VITE_API_BASE
         sync: false
-        # Set this to your backend URL after deployment
+        # Optional: Set this to your backend URL after deployment
         # Example: https://poppo-backend.onrender.com/api
+        # If not set, defaults to http://localhost:8080/api
+      - key: PORT
+        value: "3000"
     # Note: routes are only supported for static sites, not web services
     # The serve command with -s flag handles SPA routing automatically
 
