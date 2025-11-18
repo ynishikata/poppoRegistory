@@ -5,6 +5,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -39,8 +40,20 @@ func main() {
 	}
 
 	r := chi.NewRouter()
+
+	// CORS configuration - allow environment variable to override for production
+	allowedOrigins := []string{"http://localhost:5173", "http://127.0.0.1:5173"}
+	if corsOrigins := os.Getenv("CORS_ORIGINS"); corsOrigins != "" {
+		// Support comma-separated list of origins
+		origins := strings.Split(corsOrigins, ",")
+		for i := range origins {
+			origins[i] = strings.TrimSpace(origins[i])
+		}
+		allowedOrigins = origins
+	}
+
 	r.Use(cors.Handler(cors.Options{
-		AllowedOrigins:   []string{"http://localhost:5173", "http://127.0.0.1:5173"},
+		AllowedOrigins:   allowedOrigins,
 		AllowedMethods:   []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
 		AllowedHeaders:   []string{"Accept", "Authorization", "Content-Type", "X-CSRF-Token"},
 		ExposedHeaders:   []string{"Link"},
@@ -71,7 +84,28 @@ func main() {
 	fileServer := http.StripPrefix("/uploads/", http.FileServer(http.Dir("uploads")))
 	r.Handle("/uploads/*", fileServer)
 
-	addr := ":8080"
+	// Serve frontend static files in production (optional)
+	// If frontend/dist directory exists, serve it
+	if _, err := os.Stat("frontend/dist"); err == nil {
+		fs := http.FileServer(http.Dir("frontend/dist"))
+		r.Handle("/*", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			// Don't serve static files for API routes
+			if strings.HasPrefix(r.URL.Path, "/api") || strings.HasPrefix(r.URL.Path, "/uploads") {
+				http.NotFound(w, r)
+				return
+			}
+			fs.ServeHTTP(w, r)
+		}))
+	}
+
+	// Port can be set via environment variable (e.g., for production)
+	addr := os.Getenv("PORT")
+	if addr == "" {
+		addr = ":8080"
+	} else if !strings.HasPrefix(addr, ":") {
+		addr = ":" + addr
+	}
+
 	srv := &http.Server{
 		Addr:         addr,
 		Handler:      r,
@@ -80,6 +114,7 @@ func main() {
 	}
 
 	log.Printf("Server listening on %s", addr)
+	log.Printf("CORS allowed origins: %v", allowedOrigins)
 	if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		log.Fatalf("server error: %v", err)
 	}

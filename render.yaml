@@ -1,0 +1,50 @@
+services:
+  # Backend API (Go)
+  - type: web
+    name: poppo-backend
+    env: go
+    region: oregon
+    plan: free
+    buildCommand: go mod download && go build -o bin/server .
+    startCommand: ./bin/server
+    envVars:
+      - key: SUPABASE_JWT_SECRET
+        sync: false
+      - key: OPENAI_API_KEY
+        sync: false
+        optional: true
+      - key: PORT
+        value: "8080"
+      - key: CORS_ORIGINS
+        sync: false
+        # Set this to your frontend URL after deployment
+        # Example: https://poppo-frontend.onrender.com
+    disk:
+      name: poppo-data
+      mountPath: /opt/render/project/src/data
+      sizeGB: 1
+    # Health check endpoint (optional)
+    healthCheckPath: /api/me
+
+  # Frontend (React)
+  - type: web
+    name: poppo-frontend
+    env: node
+    region: oregon
+    plan: free
+    buildCommand: cd frontend && npm install && npm run build
+    startCommand: cd frontend && npx serve -s dist -l 3000
+    envVars:
+      - key: VITE_SUPABASE_URL
+        sync: false
+      - key: VITE_SUPABASE_ANON_KEY
+        sync: false
+      - key: VITE_API_BASE
+        sync: false
+        # Set this to your backend URL after deployment
+        # Example: https://poppo-backend.onrender.com/api
+    routes:
+      - type: rewrite
+        source: /*
+        destination: /index.html
+

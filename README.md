@@ -27,10 +27,16 @@
 # .env
 SUPABASE_JWT_SECRET=your-supabase-jwt-secret
 OPENAI_API_KEY=sk-...  # 会話機能を使う場合のみ
+
+# 本番環境用（オプション）
+PORT=8080  # デフォルトは8080
+CORS_ORIGINS=https://your-frontend-domain.com,https://www.your-frontend-domain.com
 ```
 
 - `SUPABASE_JWT_SECRET`: Supabase Dashboard (Settings > API > JWT Secret) から取得
 - `OPENAI_API_KEY`: [OpenAI Platform](https://platform.openai.com/api-keys) から取得（会話機能を使う場合のみ）
+- `PORT`: サーバーのポート番号（デフォルト: 8080）
+- `CORS_ORIGINS`: 許可するフロントエンドのオリジン（カンマ区切り、本番環境でHTTPSを使用する場合に設定）
 
 #### 2. バックエンド(Go)を起動
 
@@ -60,16 +66,20 @@ npm install   # or: pnpm install / yarn
 # frontend/.env
 VITE_SUPABASE_URL=https://your-project.supabase.co
 VITE_SUPABASE_ANON_KEY=your-anon-key
+
+# 本番環境用（オプション）
+VITE_API_BASE=https://your-backend-domain.com/api
 ```
 
-Supabase Dashboard (Settings > API) から取得できます。
+- `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY`: Supabase Dashboard (Settings > API) から取得
+- `VITE_API_BASE`: 本番環境でHTTPSを使用する場合、バックエンドのHTTPS URLを設定（デフォルト: `http://localhost:8080/api`）
 
 ```bash
 npm run dev
 ```
 
 - 通常 `http://localhost:5173` で開発サーバーが立ちます。
-- API へのアクセス先はデフォルトで `http://localhost:8080/api` を見るようになっています。
+- API へのアクセス先は `VITE_API_BASE` 環境変数で設定できます（デフォルト: `http://localhost:8080/api`）。
 
 ### 使い方
 
@@ -104,12 +114,36 @@ npm run dev
   - `github.com/mattn/go-sqlite3` を PostgreSQL ドライバ(例: `github.com/jackc/pgx/v5/stdlib`)に変更
   - 必要に応じて `migrate.go` のテーブル定義を調整
 
+### HTTPS対応
+
+本番環境でHTTPSを使用する場合、以下の環境変数を設定してください:
+
+**バックエンド** (`.env`):
+```bash
+CORS_ORIGINS=https://your-frontend-domain.com,https://www.your-frontend-domain.com
+PORT=8080  # 必要に応じて変更
+```
+
+**フロントエンド** (`frontend/.env`):
+```bash
+VITE_API_BASE=https://your-backend-domain.com/api
+```
+
+これにより、フロントエンドとバックエンド間の通信がHTTPSで行われます。
+
+### デプロイ
+
+本番環境へのデプロイ手順については、[DEPLOY.md](./DEPLOY.md) を参照してください。
+
+Renderを使用したデプロイが推奨されます。
+
 ### メモ
 
 - **認証**: Supabase Auth を使用しています。JWT トークンで認証を行います。
-- **セキュリティ**: 本番運用を想定する場合は、HTTPS + `Secure` Cookie、画像容量制限などを追加してください。
+- **セキュリティ**: 本番運用では必ずHTTPSを使用してください。画像容量制限などの追加セキュリティ対策も推奨します。
 - **OpenAI API**: 会話機能は OpenAI API (gpt-4o-mini) を使用しています。APIキーは環境変数で管理し、リポジトリにコミットしないでください。
 - **コスト**: OpenAI APIの使用には料金がかかります。詳細は [OpenAI Pricing](https://openai.com/api/pricing/) を参照してください。
 - **エラーメッセージ**: エラーメッセージは日本語で表示されます。
+- **デプロイ**: Render、Vercel、Netlifyなどのホスティングサービスに対応しています。
 
 

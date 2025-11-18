@@ -15,7 +15,9 @@ export type Plushie = {
   created_at?: string;
 };
 
-const API_BASE = "http://localhost:8080/api";
+// API_BASE can be set via environment variable for production (HTTPS)
+// Default to localhost for development
+const API_BASE = import.meta.env.VITE_API_BASE || "http://localhost:8080/api";
 let API_ORIGIN = "";
 try {
   const url = new URL(API_BASE);
