@@ -8,9 +8,9 @@
  */
 export function resizeImage(
   file: File,
-  maxWidth: number = 1920,
-  maxHeight: number = 1920,
-  quality: number = 0.8
+  maxWidth: number = 1280,  // Render無料プラン対応: より小さくリサイズ
+  maxHeight: number = 1280,  // Render無料プラン対応: より小さくリサイズ
+  quality: number = 0.75     // Render無料プラン対応: 品質を少し下げてファイルサイズを削減
 ): Promise<File> {
   return new Promise((resolve, reject) => {
     // 画像ファイルでない場合はそのまま返す
@@ -19,8 +19,9 @@ export function resizeImage(
       return;
     }
 
-    // 5MB以下の場合はリサイズしない（既に小さい）
-    if (file.size <= 5 * 1024 * 1024) {
+    // 2MB以下の場合はリサイズしない（既に小さい）
+    // Renderの無料プランではタイムアウトが短いため、より小さなサイズに制限
+    if (file.size <= 2 * 1024 * 1024) {
       resolve(file);
       return;
     }
@@ -29,8 +30,8 @@ export function resizeImage(
     reader.onload = (e) => {
       const img = new Image();
       img.onload = () => {
-        // リサイズが必要かチェック
-        if (img.width <= maxWidth && img.height <= maxHeight && file.size <= 2 * 1024 * 1024) {
+        // リサイズが必要かチェック（1MB以下でリサイズ済みの場合はそのまま）
+        if (img.width <= maxWidth && img.height <= maxHeight && file.size <= 1 * 1024 * 1024) {
           resolve(file);
           return;
         }

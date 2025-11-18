@@ -161,21 +161,36 @@ export async function apiCreatePlushie(params: {
   form.set("name", params.name);
   form.set("kind", params.kind);
   if (params.adoptedAt) form.set("adopted_at", params.adoptedAt);
-  if (params.imageFile) form.set("image", params.imageFile);
+  if (params.imageFile) {
+    // ファイルサイズをチェック（5MB以上は警告）
+    if (params.imageFile.size > 5 * 1024 * 1024) {
+      console.warn(`画像サイズが大きいです: ${(params.imageFile.size / 1024 / 1024).toFixed(2)}MB`);
+    }
+    form.set("image", params.imageFile);
+  }
 
   const token = await getAuthToken();
   if (!token) {
-    throw new Error("Not authenticated. Please log in.");
+    throw new Error("認証が必要です。ログインしてください。");
   }
   const headers: HeadersInit = {
     "Authorization": `Bearer ${token}`,
   };
-  const res = await fetch(`${API_BASE}/plushies`, {
-    method: "POST",
-    headers,
-    body: form,
-  });
-  return handleResponse<{ id: number }>(res);
+  
+  try {
+    const res = await fetch(`${API_BASE}/plushies`, {
+      method: "POST",
+      headers,
+      body: form,
+    });
+    return handleResponse<{ id: number }>(res);
+  } catch (err) {
+    // ネットワークエラーまたはタイムアウト
+    if (err instanceof TypeError && err.message.includes("fetch")) {
+      throw new Error("サーバーへの接続がタイムアウトしました。画像サイズが大きすぎる可能性があります。");
+    }
+    throw err;
+  }
 }
 
 export async function apiUpdatePlushie(
