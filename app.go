@@ -344,7 +344,7 @@ func (a *App) HandleCreatePlushie(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	if err := r.ParseMultipartForm(10 << 20); err != nil { // 10MB
+	if err := r.ParseMultipartForm(10 << 20); err != nil { // 10MB max file size
 		log.Printf("ERROR: HandleCreatePlushie - failed to parse form: %v", err)
 		respondError(w, http.StatusBadRequest, "フォームデータの解析に失敗しました")
 		return

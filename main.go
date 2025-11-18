@@ -109,8 +109,9 @@ func main() {
 	srv := &http.Server{
 		Addr:         addr,
 		Handler:      r,
-		ReadTimeout:  15 * time.Second,
-		WriteTimeout: 15 * time.Second,
+		ReadTimeout:  60 * time.Second,  // Increased for file uploads
+		WriteTimeout: 60 * time.Second,  // Increased for file uploads
+		IdleTimeout:  120 * time.Second, // Keep connections alive longer
 	}
 
 	log.Printf("Server listening on %s", addr)
