@@ -66,6 +66,27 @@ func (a *App) AuthMiddleware(next http.Handler) http.Handler {
 
 // HandleRegister creates a new user (email + password)
 func (a *App) HandleRegister(w http.ResponseWriter, r *http.Request) {
+	// Check user limit (default: 3, configurable via MAX_USERS env var)
+	maxUsers := 3
+	if maxUsersStr := os.Getenv("MAX_USERS"); maxUsersStr != "" {
+		if parsed, err := strconv.Atoi(maxUsersStr); err == nil && parsed > 0 {
+			maxUsers = parsed
+		}
+	}
+
+	// Count existing users
+	var count int
+	err := a.DB.QueryRow(`SELECT COUNT(*) FROM users`).Scan(&count)
+	if err != nil {
+		respondError(w, http.StatusInternalServerError, "failed to check user count")
+		return
+	}
+
+	if count >= maxUsers {
+		respondError(w, http.StatusForbidden, fmt.Sprintf("user registration is disabled. maximum users (%d) reached", maxUsers))
+		return
+	}
+
 	var req struct {
 		Email    string `json:"email"`
 		Password string `json:"password"`
