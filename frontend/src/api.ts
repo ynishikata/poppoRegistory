@@ -43,7 +43,15 @@ async function getAuthToken(): Promise<string | null> {
     console.warn("No active session. Please log in.");
     return null;
   }
-  return session.access_token || null;
+  if (!session.access_token) {
+    console.warn("Session exists but no access_token found");
+    return null;
+  }
+  // Debug: Log token presence (first 20 chars only for security)
+  if (import.meta.env.DEV) {
+    console.log("Auth token found, length:", session.access_token.length);
+  }
+  return session.access_token;
 }
 
 async function handleResponse<T>(res: Response): Promise<T> {
