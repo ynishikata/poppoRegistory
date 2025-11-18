@@ -26,6 +26,12 @@ try {
   API_ORIGIN = "http://localhost:8080";
 }
 
+// Debug: Log API_BASE in development
+if (import.meta.env.DEV) {
+  console.log("API_BASE:", API_BASE);
+  console.log("API_ORIGIN:", API_ORIGIN);
+}
+
 // Get Supabase JWT token for API requests
 async function getAuthToken(): Promise<string | null> {
   const { data: { session }, error } = await supabase.auth.getSession();
@@ -113,27 +119,36 @@ export async function apiMe(): Promise<User> {
 export async function apiListPlushies(): Promise<Plushie[]> {
   const token = await getAuthToken();
   if (!token) {
-    throw new Error("Not authenticated. Please log in.");
+    throw new Error("認証が必要です。ログインしてください。");
   }
   const headers: HeadersInit = {
     "Authorization": `Bearer ${token}`,
   };
-  const res = await fetch(`${API_BASE}/plushies`, {
-    method: "GET",
-    headers,
-  });
-  const list = await handleResponse<Plushie[]>(res);
-  if (!list || !Array.isArray(list)) {
-    return [];
+  
+  try {
+    const res = await fetch(`${API_BASE}/plushies`, {
+      method: "GET",
+      headers,
+    });
+    const list = await handleResponse<Plushie[]>(res);
+    if (!list || !Array.isArray(list)) {
+      return [];
+    }
+    return list.map((p) =>
+      p.image_url
+        ? {
+            ...p,
+            image_url: `${API_ORIGIN}${p.image_url}`
+          }
+        : p
+    );
+  } catch (err) {
+    // ネットワークエラーの場合、より詳細なエラーメッセージを提供
+    if (err instanceof TypeError && err.message.includes("fetch")) {
+      throw new Error(`APIサーバーに接続できません。URLを確認してください: ${API_BASE}`);
+    }
+    throw err;
   }
-  return list.map((p) =>
-    p.image_url
-      ? {
-          ...p,
-          image_url: `${API_ORIGIN}${p.image_url}`
-        }
-      : p
-  );
 }
 
 export async function apiCreatePlushie(params: {

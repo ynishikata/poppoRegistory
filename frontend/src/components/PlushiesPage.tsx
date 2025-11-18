@@ -7,6 +7,7 @@ import {
   apiUpdatePlushie,
   Plushie
 } from "../api";
+import { resizeImage } from "../utils/imageResize";
 
 export function PlushiesPage() {
   const [items, setItems] = useState<Plushie[]>([]);
@@ -150,9 +151,24 @@ export function PlushiesPage() {
                 id="image"
                 type="file"
                 accept="image/*"
-                onChange={(e) => setImageFile(e.target.files?.[0] ?? null)}
+                onChange={async (e) => {
+                  const file = e.target.files?.[0] ?? null;
+                  if (file) {
+                    try {
+                      // 画像をリサイズ（タイムアウト対策）
+                      const resized = await resizeImage(file);
+                      setImageFile(resized);
+                    } catch (err) {
+                      console.error("画像のリサイズに失敗しました:", err);
+                      // リサイズに失敗した場合は元のファイルを使用
+                      setImageFile(file);
+                    }
+                  } else {
+                    setImageFile(null);
+                  }
+                }}
               />
-              <div className="helper">スマホなどで撮った写真ファイルを選択してください。</div>
+              <div className="helper">スマホなどで撮った写真ファイルを選択してください。大きな画像は自動的にリサイズされます。</div>
             </div>
 
             {error && <div className="error-text">{error}</div>}
