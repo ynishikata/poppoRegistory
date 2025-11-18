@@ -19,10 +19,9 @@ services:
         sync: false
         # Set this to your frontend URL after deployment
         # Example: https://poppo-frontend.onrender.com
-    disk:
-      name: poppo-data
-      mountPath: /opt/render/project/src/data
-      sizeGB: 1
+    # Note: Disk removed for free plan (no credit card required)
+    # Data will be stored in ephemeral storage (may be lost on restart)
+    # For persistent storage, upgrade to paid plan or use external storage (S3, etc.)
     # Health check endpoint (optional)
     healthCheckPath: /api/me
 
