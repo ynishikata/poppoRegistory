@@ -88,9 +88,18 @@ func (s *SupabaseAuth) GetUserIDFromRequest(r *http.Request) (string, error) {
 		return "", errors.New("SUPABASE_JWT_SECRET not configured")
 	}
 
+	// Debug: Log all headers (for troubleshooting)
+	log.Printf("DEBUG: Request headers: %v", r.Header)
+	
 	// Try Authorization header first
 	authHeader := r.Header.Get("Authorization")
+	if authHeader == "" {
+		// Also try lowercase (some proxies normalize headers)
+		authHeader = r.Header.Get("authorization")
+	}
+	
 	if authHeader != "" {
+		log.Printf("DEBUG: Found Authorization header, length: %d", len(authHeader))
 		parts := strings.Split(authHeader, " ")
 		if len(parts) == 2 && parts[0] == "Bearer" {
 			userID, err := s.VerifyToken(parts[1])
@@ -98,7 +107,11 @@ func (s *SupabaseAuth) GetUserIDFromRequest(r *http.Request) (string, error) {
 				return "", fmt.Errorf("token verification failed: %w", err)
 			}
 			return userID, nil
+		} else {
+			log.Printf("DEBUG: Authorization header format invalid: parts=%d, first=%s", len(parts), parts[0])
 		}
+	} else {
+		log.Printf("DEBUG: No Authorization header found in request")
 	}
 
 	// Try cookie (for browser-based auth)
