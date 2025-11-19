@@ -220,13 +220,16 @@ func (a *App) HandleMe(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *App) HandleListPlushies(w http.ResponseWriter, r *http.Request) {
+	log.Printf("DEBUG: HandleListPlushies called")
 	supabaseUserID := supabaseUserIDFromContext(r.Context())
 	if supabaseUserID == "" {
+		log.Printf("ERROR: HandleListPlushies - no user ID in context")
 		respondError(w, http.StatusUnauthorized, "認証が必要です。ログインしてください。")
 		return
 	}
 	// Use Supabase UUID directly (no conversion needed)
 	userID := supabaseUserID
+	log.Printf("DEBUG: HandleListPlushies - userID: %s", userID)
 	rows, err := a.DB.Query(`
 		SELECT id, user_id, name, kind, adopted_at, image_path, created_at, updated_at
 		FROM plushies
