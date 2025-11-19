@@ -15,9 +15,16 @@ import (
 )
 
 func main() {
-	// Load .env file
+	// Load .env file (for local development only)
+	// In production (Render), environment variables are set via Render Dashboard
 	if err := godotenv.Load(); err != nil {
-		log.Printf("Warning: Error loading .env file: %v", err)
+		// Only log if running locally (check if we're in development)
+		// In production, .env file doesn't exist, which is expected
+		if os.Getenv("RENDER") == "" {
+			// Not running on Render, so this might be a real issue in local dev
+			log.Printf("Warning: Error loading .env file: %v (this is normal in production)", err)
+		}
+		// On Render, silently ignore .env file errors
 	}
 	if err := os.MkdirAll("uploads", 0o755); err != nil {
 		log.Fatalf("failed to create uploads dir: %v", err)
