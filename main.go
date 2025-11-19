@@ -5,7 +5,6 @@ import (
 	"log"
 	"net/http"
 	"os"
-	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/cors"
@@ -18,11 +17,11 @@ func main() {
 	if err := godotenv.Load(); err != nil {
 		log.Printf("Warning: Error loading .env file: %v", err)
 	}
-	if err := os.MkdirAll("uploads", 0o755); err != nil {
+	if err := os.MkdirAll(UploadsDir, 0o755); err != nil {
 		log.Fatalf("failed to create uploads dir: %v", err)
 	}
 
-	db, err := sql.Open("sqlite3", "./poppo.db?_foreign_keys=on")
+	db, err := sql.Open("sqlite3", DBPath+"?_foreign_keys=on")
 	if err != nil {
 		log.Fatalf("failed to open database: %v", err)
 	}
@@ -68,15 +67,15 @@ func main() {
 	})
 
 	// serve uploaded images
-	fileServer := http.StripPrefix("/uploads/", http.FileServer(http.Dir("uploads")))
+	fileServer := http.StripPrefix("/uploads/", http.FileServer(http.Dir(UploadsDir)))
 	r.Handle("/uploads/*", fileServer)
 
-	addr := ":8080"
+	addr := DefaultPort
 	srv := &http.Server{
 		Addr:         addr,
 		Handler:      r,
-		ReadTimeout:  15 * time.Second,
-		WriteTimeout: 15 * time.Second,
+		ReadTimeout:  DefaultReadTimeout,
+		WriteTimeout: DefaultWriteTimeout,
 	}
 
 	log.Printf("Server listening on %s", addr)

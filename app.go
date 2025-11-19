@@ -11,12 +11,9 @@ import (
 	"net/http"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 
-	"strings"
-
-	"github.com/go-chi/chi/v5"
-	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
 	"golang.org/x/crypto/bcrypt"
 )
@@ -64,7 +61,7 @@ func (a *App) AuthMiddleware(next http.Handler) http.Handler {
 // HandleRegister creates a new user (email + password)
 func (a *App) HandleRegister(w http.ResponseWriter, r *http.Request) {
 	// Check user limit (default: 3, configurable via MAX_USERS env var)
-	maxUsers := 3
+	maxUsers := DefaultMaxUsers
 	if maxUsersStr := os.Getenv("MAX_USERS"); maxUsersStr != "" {
 		if parsed, err := strconv.Atoi(maxUsersStr); err == nil && parsed > 0 {
 			maxUsers = parsed
@@ -174,104 +171,75 @@ func (a *App) HandleLogout(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *App) HandleMe(w http.ResponseWriter, r *http.Request) {
-	userID := supabaseUserIDFromContext(r.Context())
-	if userID == "" {
-		respondError(w, http.StatusUnauthorized, "unauthorized")
+	userID, err := getUserIDFromRequest(r)
+	if err != nil {
+		respondError(w, http.StatusUnauthorized, ErrAuthRequired)
 		return
 	}
 
 	// Get user info from JWT token
-	supabaseAuth := NewSupabaseAuth()
-	authHeader := r.Header.Get("Authorization")
-	var email string
-	if authHeader != "" {
-		parts := strings.Split(authHeader, " ")
-		if len(parts) == 2 && parts[0] == "Bearer" {
-			token, err := jwt.ParseWithClaims(parts[1], &SupabaseClaims{}, func(token *jwt.Token) (interface{}, error) {
-				return []byte(supabaseAuth.JWTSecret), nil
-			})
-			if err == nil {
-				if claims, ok := token.Claims.(*SupabaseClaims); ok {
-					email = claims.Email
-					// Ensure user exists in users table with supabase_user_id
-					_, _ = a.DB.Exec(`
-						INSERT OR IGNORE INTO users (supabase_user_id, email, password_hash, created_at)
-						VALUES (?, ?, '', datetime('now'))
-					`, userID, email)
-					// Update email if user exists
-					_, _ = a.DB.Exec(`
-						UPDATE users SET email = ? WHERE supabase_user_id = ?
-					`, email, userID)
-					respondJSON(w, http.StatusOK, map[string]any{
-						"id":    claims.Sub,
-						"email": claims.Email,
-					})
-					return
-				}
-			}
+	email, err := getEmailFromJWT(r)
+	if err == nil && email != "" {
+		// Ensure user exists in users table
+		if err := a.ensureUserExists(userID, email); err != nil {
+			log.Printf("WARNING: Failed to ensure user exists: %v", err)
 		}
+		respondJSON(w, http.StatusOK, map[string]any{
+			"id":    userID,
+			"email": email,
+		})
+		return
 	}
 
 	// Fallback: return user ID only
 	respondJSON(w, http.StatusOK, map[string]any{
 		"id":    userID,
-		"email": email,
+		"email": "",
 	})
 }
 
 func (a *App) HandleListPlushies(w http.ResponseWriter, r *http.Request) {
-	supabaseUserID := supabaseUserIDFromContext(r.Context())
-	if supabaseUserID == "" {
-		respondError(w, http.StatusUnauthorized, "認証が必要です。ログインしてください。")
+	userID, err := getUserIDFromRequest(r)
+	if err != nil {
+		respondError(w, http.StatusUnauthorized, ErrAuthRequired)
 		return
 	}
-	// Use Supabase UUID directly (no conversion needed)
-	userID := supabaseUserID
+
 	rows, err := a.DB.Query(`
-		SELECT id, user_id, name, kind, adopted_at, image_path, created_at, updated_at
+		SELECT id, user_id, name, kind, adopted_at, image_path, conversation_history, created_at, updated_at
 		FROM plushies
 		WHERE user_id = ?
 		ORDER BY created_at DESC
 	`, userID)
 	if err != nil {
-		respondError(w, http.StatusInternalServerError, "ぬいぐるみ一覧の取得に失敗しました")
+		respondError(w, http.StatusInternalServerError, ErrFailedToListPlushies)
 		return
 	}
 	defer rows.Close()
 
 	var items []Plushie
 	for rows.Next() {
-		var p Plushie
-		var adoptedAt sql.NullString
-		var imagePath sql.NullString
-		if err := rows.Scan(&p.ID, &p.UserID, &p.Name, &p.Kind, &adoptedAt, &imagePath, &p.CreatedAt, &p.ModifiedAt); err != nil {
-			respondError(w, http.StatusInternalServerError, "データの読み込みに失敗しました")
+		p, err := scanPlushieFromRow(rows)
+		if err != nil {
+			respondError(w, http.StatusInternalServerError, ErrDataReadFailed)
 			return
 		}
-		if adoptedAt.Valid {
-			p.AdoptedAt = adoptedAt.String
-		}
-		if imagePath.Valid {
-			p.ImageURL = "/uploads/" + imagePath.String
-		}
-		items = append(items, p)
+		items = append(items, *p)
 	}
 
 	respondJSON(w, http.StatusOK, items)
 }
 
 func (a *App) HandleGetPlushie(w http.ResponseWriter, r *http.Request) {
-	supabaseUserID := supabaseUserIDFromContext(r.Context())
-	if supabaseUserID == "" {
-		respondError(w, http.StatusUnauthorized, "認証が必要です。ログインしてください。")
+	userID, err := getUserIDFromRequest(r)
+	if err != nil {
+		respondError(w, http.StatusUnauthorized, ErrAuthRequired)
 		return
 	}
-	// Use Supabase UUID directly (no conversion needed)
-	userID := supabaseUserID
-	idStr := chi.URLParam(r, "id")
-	id, err := strconv.ParseInt(idStr, 10, 64)
+
+	id, err := parsePlushieID(r)
 	if err != nil {
-		respondError(w, http.StatusBadRequest, "無効なIDです")
+		respondError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
@@ -286,9 +254,9 @@ func (a *App) HandleGetPlushie(w http.ResponseWriter, r *http.Request) {
 	`, id, userID).Scan(&p.ID, &p.UserID, &p.Name, &p.Kind, &adoptedAt, &imagePath, &conversationHistory, &p.CreatedAt, &p.ModifiedAt)
 	if err != nil {
 		if err == sql.ErrNoRows {
-			respondError(w, http.StatusNotFound, "ぬいぐるみが見つかりませんでした")
+			respondError(w, http.StatusNotFound, ErrPlushieNotFound)
 		} else {
-			respondError(w, http.StatusInternalServerError, "ぬいぐるみ情報の取得に失敗しました")
+			respondError(w, http.StatusInternalServerError, ErrFailedToGetPlushie)
 		}
 		return
 	}
@@ -313,40 +281,19 @@ func (a *App) HandleCreatePlushie(w http.ResponseWriter, r *http.Request) {
 		}
 	}()
 
-	supabaseUserID := supabaseUserIDFromContext(r.Context())
-	if supabaseUserID == "" {
-		log.Printf("ERROR: HandleCreatePlushie - no user ID in context")
-		respondError(w, http.StatusUnauthorized, "unauthorized")
+	userID, err := getUserIDFromRequest(r)
+	if err != nil {
+		respondError(w, http.StatusUnauthorized, ErrAuthRequired)
 		return
 	}
-	// Use Supabase UUID directly (no conversion needed)
-	userID := supabaseUserID
 
 	// Ensure user exists in users table for foreign key constraint
-	// Get email from JWT token if available
-	supabaseAuth := NewSupabaseAuth()
-	authHeader := r.Header.Get("Authorization")
-	if authHeader != "" {
-		parts := strings.Split(authHeader, " ")
-		if len(parts) == 2 && parts[0] == "Bearer" {
-			token, err := jwt.ParseWithClaims(parts[1], &SupabaseClaims{}, func(token *jwt.Token) (interface{}, error) {
-				return []byte(supabaseAuth.JWTSecret), nil
-			})
-			if err == nil {
-				if claims, ok := token.Claims.(*SupabaseClaims); ok {
-					// Ensure user exists in users table
-					_, _ = a.DB.Exec(`
-						INSERT OR IGNORE INTO users (supabase_user_id, email, password_hash, created_at)
-						VALUES (?, ?, '', datetime('now'))
-					`, userID, claims.Email)
-				}
-			}
-		}
+	if err := a.ensureUserExistsFromRequest(r, userID); err != nil {
+		log.Printf("WARNING: Failed to ensure user exists: %v", err)
 	}
 
-	if err := r.ParseMultipartForm(10 << 20); err != nil { // 10MB
-		log.Printf("ERROR: HandleCreatePlushie - failed to parse form: %v", err)
-		respondError(w, http.StatusBadRequest, "フォームデータの解析に失敗しました")
+	if err := r.ParseMultipartForm(MaxMultipartFormSize); err != nil {
+		respondError(w, http.StatusBadRequest, ErrFailedToParseForm)
 		return
 	}
 
@@ -354,15 +301,13 @@ func (a *App) HandleCreatePlushie(w http.ResponseWriter, r *http.Request) {
 	kind := r.FormValue("kind")
 	adoptedAt := r.FormValue("adopted_at")
 	if name == "" {
-		log.Printf("ERROR: HandleCreatePlushie - name is empty")
-		respondError(w, http.StatusBadRequest, "名前は必須です")
+		respondError(w, http.StatusBadRequest, ErrNameRequired)
 		return
 	}
 
 	imagePath, err := saveUploadedFile(r, "image")
 	if err != nil && !errors.Is(err, ErrNoFile) {
-		log.Printf("ERROR: HandleCreatePlushie - failed to save image: %v", err)
-		respondError(w, http.StatusBadRequest, fmt.Sprintf("画像の保存に失敗しました: %v", err))
+		respondError(w, http.StatusBadRequest, ErrFailedToSaveImage+": "+err.Error())
 		return
 	}
 
@@ -372,11 +317,10 @@ func (a *App) HandleCreatePlushie(w http.ResponseWriter, r *http.Request) {
 		VALUES (?, ?, ?, ?, ?, ?, ?)
 	`, userID, name, kind, nullIfEmpty(adoptedAt), nullIfEmpty(imagePath), now, now)
 	if err != nil {
-		log.Printf("ERROR: HandleCreatePlushie - failed to insert plushie: %v", err)
 		if strings.Contains(err.Error(), "FOREIGN KEY") {
-			respondError(w, http.StatusBadRequest, "ユーザー情報が見つかりません。再度ログインしてください。")
+			respondError(w, http.StatusBadRequest, ErrUserNotFound)
 		} else {
-			respondError(w, http.StatusInternalServerError, "データベースへの保存に失敗しました")
+			respondError(w, http.StatusInternalServerError, ErrFailedToCreatePlushie)
 		}
 		return
 	}
@@ -385,40 +329,43 @@ func (a *App) HandleCreatePlushie(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *App) HandleUpdatePlushie(w http.ResponseWriter, r *http.Request) {
-	supabaseUserID := supabaseUserIDFromContext(r.Context())
-	if supabaseUserID == "" {
-		respondError(w, http.StatusUnauthorized, "認証が必要です。ログインしてください。")
-		return
-	}
-	// Use Supabase UUID directly (no conversion needed)
-	userID := supabaseUserID
-	idStr := chi.URLParam(r, "id")
-	id, err := strconv.ParseInt(idStr, 10, 64)
+	userID, err := getUserIDFromRequest(r)
 	if err != nil {
-		respondError(w, http.StatusBadRequest, "無効なIDです")
+		respondError(w, http.StatusUnauthorized, ErrAuthRequired)
 		return
 	}
 
-	if err := r.ParseMultipartForm(10 << 20); err != nil {
-		respondError(w, http.StatusBadRequest, "フォームデータの解析に失敗しました")
+	id, err := parsePlushieID(r)
+	if err != nil {
+		respondError(w, http.StatusBadRequest, err.Error())
 		return
 	}
+
+	if err := r.ParseMultipartForm(MaxMultipartFormSize); err != nil {
+		respondError(w, http.StatusBadRequest, ErrFailedToParseForm)
+		return
+	}
+
 	name := r.FormValue("name")
 	kind := r.FormValue("kind")
 	adoptedAt := r.FormValue("adopted_at")
 
-	// ensure it belongs to this user
+	// Check ownership and get existing image
 	var existingImage sql.NullString
 	err = a.DB.QueryRow(`SELECT image_path FROM plushies WHERE id = ? AND user_id = ?`, id, userID).Scan(&existingImage)
 	if err != nil {
-		respondError(w, http.StatusNotFound, "plushie not found")
+		if err == sql.ErrNoRows {
+			respondError(w, http.StatusNotFound, ErrPlushieNotFound)
+		} else {
+			respondError(w, http.StatusInternalServerError, ErrFailedToGetPlushie)
+		}
 		return
 	}
 
 	imagePath := ""
 	filePath, err := saveUploadedFile(r, "image")
 	if err != nil && !errors.Is(err, ErrNoFile) {
-		respondError(w, http.StatusBadRequest, "画像の保存に失敗しました")
+		respondError(w, http.StatusBadRequest, ErrFailedToSaveImage)
 		return
 	}
 	if filePath != "" {
@@ -433,7 +380,7 @@ func (a *App) HandleUpdatePlushie(w http.ResponseWriter, r *http.Request) {
 		WHERE id = ? AND user_id = ?
 	`, name, kind, nullIfEmpty(adoptedAt), nullIfEmpty(imagePath), time.Now().UTC(), id, userID)
 	if err != nil {
-		respondError(w, http.StatusInternalServerError, "ぬいぐるみ情報の更新に失敗しました")
+		respondError(w, http.StatusInternalServerError, ErrFailedToUpdatePlushie)
 		return
 	}
 
@@ -441,28 +388,26 @@ func (a *App) HandleUpdatePlushie(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *App) HandleDeletePlushie(w http.ResponseWriter, r *http.Request) {
-	supabaseUserID := supabaseUserIDFromContext(r.Context())
-	if supabaseUserID == "" {
-		respondError(w, http.StatusUnauthorized, "認証が必要です。ログインしてください。")
+	userID, err := getUserIDFromRequest(r)
+	if err != nil {
+		respondError(w, http.StatusUnauthorized, ErrAuthRequired)
 		return
 	}
-	// Use Supabase UUID directly (no conversion needed)
-	userID := supabaseUserID
-	idStr := chi.URLParam(r, "id")
-	id, err := strconv.ParseInt(idStr, 10, 64)
+
+	id, err := parsePlushieID(r)
 	if err != nil {
-		respondError(w, http.StatusBadRequest, "無効なIDです")
+		respondError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
 	res, err := a.DB.Exec(`DELETE FROM plushies WHERE id = ? AND user_id = ?`, id, userID)
 	if err != nil {
-		respondError(w, http.StatusInternalServerError, "ぬいぐるみの削除に失敗しました")
+		respondError(w, http.StatusInternalServerError, ErrFailedToDeletePlushie)
 		return
 	}
 	affected, _ := res.RowsAffected()
 	if affected == 0 {
-		respondError(w, http.StatusNotFound, "plushie not found")
+		respondError(w, http.StatusNotFound, ErrPlushieNotFound)
 		return
 	}
 
@@ -470,17 +415,15 @@ func (a *App) HandleDeletePlushie(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *App) HandleUpdateConversation(w http.ResponseWriter, r *http.Request) {
-	supabaseUserID := supabaseUserIDFromContext(r.Context())
-	if supabaseUserID == "" {
-		respondError(w, http.StatusUnauthorized, "認証が必要です。ログインしてください。")
+	userID, err := getUserIDFromRequest(r)
+	if err != nil {
+		respondError(w, http.StatusUnauthorized, ErrAuthRequired)
 		return
 	}
-	// Use Supabase UUID directly (no conversion needed)
-	userID := supabaseUserID
-	idStr := chi.URLParam(r, "id")
-	id, err := strconv.ParseInt(idStr, 10, 64)
+
+	id, err := parsePlushieID(r)
 	if err != nil {
-		respondError(w, http.StatusBadRequest, "無効なIDです")
+		respondError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
@@ -492,11 +435,13 @@ func (a *App) HandleUpdateConversation(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// ensure it belongs to this user
-	var exists int
-	err = a.DB.QueryRow(`SELECT 1 FROM plushies WHERE id = ? AND user_id = ?`, id, userID).Scan(&exists)
-	if err != nil {
-		respondError(w, http.StatusNotFound, "plushie not found")
+	// Check ownership
+	if err := a.checkPlushieOwnership(id, userID); err != nil {
+		if err.Error() == ErrPlushieNotFound {
+			respondError(w, http.StatusNotFound, err.Error())
+		} else {
+			respondError(w, http.StatusInternalServerError, err.Error())
+		}
 		return
 	}
 
@@ -506,7 +451,7 @@ func (a *App) HandleUpdateConversation(w http.ResponseWriter, r *http.Request) {
 		WHERE id = ? AND user_id = ?
 	`, req.ConversationHistory, time.Now().UTC(), id, userID)
 	if err != nil {
-		respondError(w, http.StatusInternalServerError, "会話履歴の更新に失敗しました")
+		respondError(w, http.StatusInternalServerError, ErrFailedToUpdateConv)
 		return
 	}
 
@@ -514,17 +459,15 @@ func (a *App) HandleUpdateConversation(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *App) HandleChat(w http.ResponseWriter, r *http.Request) {
-	supabaseUserID := supabaseUserIDFromContext(r.Context())
-	if supabaseUserID == "" {
-		respondError(w, http.StatusUnauthorized, "認証が必要です。ログインしてください。")
+	userID, err := getUserIDFromRequest(r)
+	if err != nil {
+		respondError(w, http.StatusUnauthorized, ErrAuthRequired)
 		return
 	}
-	// Use Supabase UUID directly (no conversion needed)
-	userID := supabaseUserID
-	idStr := chi.URLParam(r, "id")
-	id, err := strconv.ParseInt(idStr, 10, 64)
+
+	id, err := parsePlushieID(r)
 	if err != nil {
-		respondError(w, http.StatusBadRequest, "無効なIDです")
+		respondError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
@@ -538,9 +481,9 @@ func (a *App) HandleChat(w http.ResponseWriter, r *http.Request) {
 	`, id, userID).Scan(&name, &kind, &conversationHistory)
 	if err != nil {
 		if err == sql.ErrNoRows {
-			respondError(w, http.StatusNotFound, "ぬいぐるみが見つかりませんでした")
+			respondError(w, http.StatusNotFound, ErrPlushieNotFound)
 		} else {
-			respondError(w, http.StatusInternalServerError, "ぬいぐるみ情報の取得に失敗しました")
+			respondError(w, http.StatusInternalServerError, ErrFailedToGetPlushie)
 		}
 		return
 	}
@@ -548,7 +491,7 @@ func (a *App) HandleChat(w http.ResponseWriter, r *http.Request) {
 	// Call OpenAI API
 	apiKey := os.Getenv("OPENAI_API_KEY")
 	if apiKey == "" {
-		respondError(w, http.StatusInternalServerError, "OPENAI_API_KEY not configured")
+		respondError(w, http.StatusInternalServerError, ErrOpenAIKeyNotSet)
 		return
 	}
 
@@ -560,7 +503,7 @@ func (a *App) HandleChat(w http.ResponseWriter, r *http.Request) {
 	prompt := buildChatPrompt(name, kind, history)
 	message, err := callOpenAI(apiKey, prompt)
 	if err != nil {
-		respondError(w, http.StatusInternalServerError, "チャットの生成に失敗しました: "+err.Error())
+		respondError(w, http.StatusInternalServerError, ErrFailedToChat+": "+err.Error())
 		return
 	}
 

@@ -115,20 +115,20 @@ func (a *App) SupabaseAuthMiddleware(next http.Handler) http.Handler {
 		supabaseAuth := NewSupabaseAuth()
 		if supabaseAuth.JWTSecret == "" {
 			log.Printf("ERROR: SUPABASE_JWT_SECRET not configured")
-			respondError(w, http.StatusInternalServerError, "サーバー設定エラー: SUPABASE_JWT_SECRETが設定されていません")
+			respondError(w, http.StatusInternalServerError, ErrServerConfigError)
 			return
 		}
 		userID, err := supabaseAuth.GetUserIDFromRequest(r)
 		if err != nil || userID == "" {
 			log.Printf("Auth error: %v", err)
-			errMsg := "認証に失敗しました"
+			errMsg := ErrAuthFailed
 			if err != nil {
 				if strings.Contains(err.Error(), "token expired") {
-					errMsg = "トークンの有効期限が切れています。再度ログインしてください。"
+					errMsg = ErrTokenExpired
 				} else if strings.Contains(err.Error(), "no valid token") {
-					errMsg = "認証トークンが見つかりません。ログインしてください。"
+					errMsg = ErrTokenNotFound
 				} else if strings.Contains(err.Error(), "SUPABASE_JWT_SECRET") {
-					errMsg = "サーバー設定エラーが発生しました。"
+					errMsg = ErrServerConfigError
 				}
 			}
 			respondError(w, http.StatusUnauthorized, errMsg)

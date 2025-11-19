@@ -39,7 +39,7 @@ func saveUploadedFile(r *http.Request, field string) (string, error) {
 		ext = ".dat"
 	}
 	filename := uuid.NewString() + ext
-	dstPath := filepath.Join("uploads", filename)
+	dstPath := filepath.Join(UploadsDir, filename)
 
 	dst, err := os.Create(dstPath)
 	if err != nil {
