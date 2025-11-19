@@ -116,6 +116,8 @@ func main() {
 
 	log.Printf("Server listening on %s", addr)
 	log.Printf("CORS allowed origins: %v", allowedOrigins)
+	log.Printf("SUPABASE_JWT_SECRET configured: %v", os.Getenv("SUPABASE_JWT_SECRET") != "")
+	log.Printf("Server starting...")
 	if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		log.Fatalf("server error: %v", err)
 	}
